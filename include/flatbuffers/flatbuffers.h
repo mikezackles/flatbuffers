@@ -477,7 +477,7 @@ class vector_downward {
       reserved_ = (reserved_ + (largest_align - 1)) & ~(largest_align - 1);
       auto new_buf = allocator_.allocate(reserved_);
       auto new_cur = new_buf + reserved_ - old_size;
-      memcpy(new_cur, cur_, old_size);
+      memmove(new_cur, cur_, old_size);
       cur_ = new_cur;
       allocator_.deallocate(buf_);
       buf_ = new_buf;
