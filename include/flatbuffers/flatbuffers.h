@@ -414,13 +414,13 @@ struct String : public Vector<char> {
 class simple_allocator {
  public:
   virtual ~simple_allocator() {}
-  virtual uint8_t *allocate(size_t size) const { return new uint8_t[size]; }
-  virtual void deallocate(uint8_t *p) const { delete[] p; }
+  virtual uint8_t *allocate(size_t size) { return new uint8_t[size]; }
+  virtual void deallocate(uint8_t *p) { delete[] p; }
 };
 
 class buf_deleter {
 public:
-  explicit buf_deleter(const simple_allocator &allocator,
+  explicit buf_deleter(simple_allocator &allocator,
                        uint8_t *buf)
     : allocator_(allocator),
       buf_(buf) {
@@ -429,7 +429,7 @@ public:
     allocator_.deallocate(buf_);
   }
 private:
-  const simple_allocator &allocator_;
+  simple_allocator &allocator_;
   uint8_t *buf_;
 };
 
@@ -442,7 +442,7 @@ typedef std::unique_ptr<uint8_t, buf_deleter> unique_ptr_t;
 class vector_downward {
  public:
   explicit vector_downward(size_t initial_size,
-                           const simple_allocator &allocator)
+                           simple_allocator &allocator)
     : reserved_(initial_size),
       buf_(allocator.allocate(reserved_)),
       cur_(buf_ + reserved_),
@@ -533,7 +533,7 @@ class vector_downward {
   size_t reserved_;
   uint8_t *buf_;
   uint8_t *cur_;  // Points at location between empty (below) and used (above).
-  const simple_allocator &allocator_;
+  simple_allocator &allocator_;
 };
 
 // Converts a Field ID to a virtual table offset.
@@ -573,7 +573,7 @@ FLATBUFFERS_FINAL_CLASS
   /// used. Defaults to `nullptr`, which means the `default_allocator` will be
   /// be used.
   explicit FlatBufferBuilder(uoffset_t initial_size = 1024,
-                             const simple_allocator *allocator = nullptr)
+                             simple_allocator *allocator = nullptr)
       : buf_(initial_size, allocator ? *allocator : default_allocator),
         nested(false), finished(false), minalign_(1), force_defaults_(false) {
     offsetbuf_.reserve(16);  // Avoid first few reallocs.
