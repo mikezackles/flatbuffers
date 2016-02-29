@@ -110,10 +110,6 @@ typedef uint16_t voffset_t;
 
 typedef uintmax_t largest_scalar_t;
 
-// Pointer to relinquished memory.
-typedef std::unique_ptr<uint8_t, std::function<void(uint8_t * /* unused */)>>
-          unique_ptr_t;
-
 // Wrapper for uoffset_t to allow safe template specialization.
 template<typename T> struct Offset {
   uoffset_t o;
@@ -422,6 +418,24 @@ class simple_allocator {
   virtual void deallocate(uint8_t *p) const { delete[] p; }
 };
 
+class buf_deleter {
+public:
+  explicit buf_deleter(const simple_allocator &allocator,
+                       uint8_t *buf)
+    : allocator_(allocator),
+      buf_(buf) {
+  }
+  void operator()(uint8_t *) {
+    allocator_.deallocate(buf_);
+  }
+private:
+  const simple_allocator &allocator_;
+  uint8_t *buf_;
+};
+
+// Pointer to relinquished memory.
+typedef std::unique_ptr<uint8_t, buf_deleter> unique_ptr_t;
+
 // This is a minimal replication of std::vector<uint8_t> functionality,
 // except growing from higher to lower addresses. i.e push_back() inserts data
 // in the lowest address in the vector.
@@ -450,12 +464,8 @@ class vector_downward {
 
   // Relinquish the pointer to the caller.
   unique_ptr_t release() {
-    // Actually deallocate from the start of the allocated memory.
-    std::function<void(uint8_t *)> deleter(
-      std::bind(&simple_allocator::deallocate, allocator_, buf_));
-
     // Point to the desired offset.
-    unique_ptr_t retval(data(), deleter);
+    unique_ptr_t retval(data(), buf_deleter(allocator_, buf_));
 
     // Don't deallocate when this instance is destroyed.
     buf_ = nullptr;
