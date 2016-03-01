@@ -574,7 +574,7 @@ FLATBUFFERS_FINAL_CLASS
   /// be used.
   explicit FlatBufferBuilder(uoffset_t initial_size = 1024,
                              simple_allocator *allocator = nullptr)
-      : buf_(initial_size, allocator ? *allocator : default_allocator),
+      : buf_(initial_size, allocator ? *allocator : default_allocator()),
         nested(false), finished(false), minalign_(1), force_defaults_(false) {
     offsetbuf_.reserve(16);  // Avoid first few reallocs.
     vtables_.reserve(16);
@@ -1040,7 +1040,10 @@ FLATBUFFERS_FINAL_CLASS
     voffset_t id;
   };
 
-  simple_allocator default_allocator;
+  static simple_allocator &default_allocator() {
+    static simple_allocator allocator;
+    return allocator;
+  }
 
   vector_downward buf_;
 
