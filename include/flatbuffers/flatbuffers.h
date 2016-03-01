@@ -409,13 +409,20 @@ struct String : public Vector<char> {
   }
 };
 
+struct allocation {
+  uint8_t * buf;
+  size_t size;
+};
+
 // Simple indirection for buffer allocation, to allow this to be overridden
 // with custom allocation (see the FlatBufferBuilder constructor).
 class simple_allocator {
  public:
   virtual ~simple_allocator() {}
-  virtual uint8_t *allocate(size_t size) { return new uint8_t[size]; }
-  virtual void deallocate(uint8_t *p) { delete[] p; }
+  virtual allocation allocate(size_t size) {
+    return {new uint8_t[size], size};
+  }
+  virtual void deallocate(allocation a) { delete[] a.buf; }
   virtual size_t growth_policy(size_t bytes) {
     return (bytes / 2) & ~(sizeof(largest_scalar_t) - 1);
   }
@@ -424,16 +431,16 @@ class simple_allocator {
 class buf_deleter {
 public:
   explicit buf_deleter(simple_allocator &allocator,
-                       uint8_t *buf)
+                       allocation alloc)
     : allocator_(allocator),
-      buf_(buf) {
+      allocation_(alloc) {
   }
   void operator()(uint8_t *) {
-    allocator_.deallocate(buf_);
+    allocator_.deallocate(allocation_);
   }
 private:
   simple_allocator &allocator_;
-  uint8_t *buf_;
+  allocation allocation_;
 };
 
 // Pointer to relinquished memory.
@@ -447,52 +454,57 @@ class vector_downward {
   explicit vector_downward(size_t initial_size,
                            simple_allocator &allocator)
     : initial_size_(initial_size),
-      reserved_(initial_size_),
-      buf_(allocator.allocate(reserved_)),
-      cur_(buf_ + reserved_),
+      allocated_(allocator.allocate(initial_size_)),
+      cur_(allocated_.buf + allocated_.size),
       allocator_(allocator) {
-    assert((initial_size & (sizeof(largest_scalar_t) - 1)) == 0);
+    assert_aligned(allocated_.size);
+    assert(allocated_.size >= initial_size_);
   }
 
   ~vector_downward() {
-    if (buf_)
-      allocator_.deallocate(buf_);
+    if (allocated_.buf)
+      allocator_.deallocate(allocated_);
   }
 
   void clear() {
-    if (buf_ == nullptr) {
-      reserved_ = initial_size_;
-      buf_ = allocator_.allocate(reserved_);
+    if (allocated_.buf == nullptr) {
+      allocated_ = allocator_.allocate(initial_size_);
+      assert_aligned(allocated_.size);
+      assert(allocated_.size >= initial_size_);
     }
 
-    cur_ = buf_ + reserved_;
+    cur_ = allocated_.buf + allocated_.size;
   }
 
   // Relinquish the pointer to the caller.
   unique_ptr_t release() {
     // Point to the desired offset.
-    unique_ptr_t retval(data(), buf_deleter(allocator_, buf_));
+    unique_ptr_t retval(data(), buf_deleter(allocator_, allocated_));
 
     // Don't deallocate when this instance is destroyed.
-    buf_ = nullptr;
+    allocated_.buf = nullptr;
+    allocated_.size = 0;
     cur_ = nullptr;
 
     return retval;
   }
 
   uint8_t *make_space(size_t len) {
-    if (len > static_cast<size_t>(cur_ - buf_)) {
+    if (len > static_cast<size_t>(cur_ - allocated_.buf)) {
       auto old_size = size();
       auto largest_align = AlignOf<largest_scalar_t>();
-      reserved_ += (std::max)(len, allocator_.growth_policy(reserved_));
+      auto new_size = allocated_.size
+      + (std::max)(len, allocator_.growth_policy(allocated_.size));
       // Round up to avoid undefined behavior from unaligned loads and stores.
-      reserved_ = (reserved_ + (largest_align - 1)) & ~(largest_align - 1);
-      auto new_buf = allocator_.allocate(reserved_);
-      auto new_cur = new_buf + reserved_ - old_size;
+      new_size = (new_size + (largest_align - 1)) & ~(largest_align - 1);
+      auto new_alloc = allocator_.allocate(new_size);
+      assert_aligned(new_alloc.size);
+      assert(new_alloc.size >= new_size);
+      auto new_cur = new_alloc.buf + new_alloc.size - old_size;
       memmove(new_cur, cur_, old_size);
       cur_ = new_cur;
-      allocator_.deallocate(buf_);
-      buf_ = new_buf;
+      allocator_.deallocate(allocated_);
+      allocated_ = new_alloc;
     }
     cur_ -= len;
     // Beyond this, signed offsets may not have enough range:
@@ -502,8 +514,8 @@ class vector_downward {
   }
 
   uoffset_t size() const {
-    assert(cur_ != nullptr && buf_ != nullptr);
-    return static_cast<uoffset_t>(reserved_ - (cur_ - buf_));
+    assert(cur_ != nullptr && allocated_.buf != nullptr);
+    return static_cast<uoffset_t>(allocated_.size - (cur_ - allocated_.buf));
   }
 
   uint8_t *data() const {
@@ -511,7 +523,9 @@ class vector_downward {
     return cur_;
   }
 
-  uint8_t *data_at(size_t offset) { return buf_ + reserved_ - offset; }
+  uint8_t *data_at(size_t offset) {
+    return allocated_.buf + allocated_.size - offset;
+  }
 
   // push() & fill() are most frequently called with small byte counts (<= 4),
   // which is why we're using loops rather than calling memcpy/memset.
@@ -528,13 +542,16 @@ class vector_downward {
   void pop(size_t bytes_to_remove) { cur_ += bytes_to_remove; }
 
  private:
+  void assert_aligned(size_t size) {
+    assert((size & (sizeof(largest_scalar_t) - 1)) == 0);
+  }
+
   // You shouldn't really be copying instances of this class.
   vector_downward(const vector_downward &);
   vector_downward &operator=(const vector_downward &);
 
   size_t initial_size_;
-  size_t reserved_;
-  uint8_t *buf_;
+  allocation allocated_;
   uint8_t *cur_;  // Points at location between empty (below) and used (above).
   simple_allocator &allocator_;
 };
