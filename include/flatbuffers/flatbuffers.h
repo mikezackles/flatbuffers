@@ -446,7 +446,8 @@ class vector_downward {
  public:
   explicit vector_downward(size_t initial_size,
                            simple_allocator &allocator)
-    : reserved_(initial_size),
+    : initial_size_(initial_size),
+      reserved_(initial_size_),
       buf_(allocator.allocate(reserved_)),
       cur_(buf_ + reserved_),
       allocator_(allocator) {
@@ -459,8 +460,10 @@ class vector_downward {
   }
 
   void clear() {
-    if (buf_ == nullptr)
+    if (buf_ == nullptr) {
+      reserved_ = initial_size_;
       buf_ = allocator_.allocate(reserved_);
+    }
 
     cur_ = buf_ + reserved_;
   }
@@ -529,6 +532,7 @@ class vector_downward {
   vector_downward(const vector_downward &);
   vector_downward &operator=(const vector_downward &);
 
+  size_t initial_size_;
   size_t reserved_;
   uint8_t *buf_;
   uint8_t *cur_;  // Points at location between empty (below) and used (above).
