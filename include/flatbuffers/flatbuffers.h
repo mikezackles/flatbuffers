@@ -416,6 +416,9 @@ class simple_allocator {
   virtual ~simple_allocator() {}
   virtual uint8_t *allocate(size_t size) { return new uint8_t[size]; }
   virtual void deallocate(uint8_t *p) { delete[] p; }
+  virtual size_t growth_policy(size_t bytes) {
+    return (bytes / 2) & ~(sizeof(largest_scalar_t) - 1);
+  }
 };
 
 class buf_deleter {
@@ -474,15 +477,11 @@ class vector_downward {
     return retval;
   }
 
-  size_t growth_policy(size_t bytes) {
-    return (bytes / 2) & ~(sizeof(largest_scalar_t) - 1);
-  }
-
   uint8_t *make_space(size_t len) {
     if (len > static_cast<size_t>(cur_ - buf_)) {
       auto old_size = size();
       auto largest_align = AlignOf<largest_scalar_t>();
-      reserved_ += (std::max)(len, growth_policy(reserved_));
+      reserved_ += (std::max)(len, allocator_.growth_policy(reserved_));
       // Round up to avoid undefined behavior from unaligned loads and stores.
       reserved_ = (reserved_ + (largest_align - 1)) & ~(largest_align - 1);
       auto new_buf = allocator_.allocate(reserved_);
